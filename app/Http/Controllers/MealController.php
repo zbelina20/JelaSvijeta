@@ -9,33 +9,36 @@ class MealController extends Controller
 {
     public function index(Request $request)
     {
-        // Dohvati sva jela
-        $query = Meal::query();
+        $perPage = $request->input('per_page', 10); // Broj zapisa po stranici, zadani 10 ako nije navedeno
+        $page = $request->input('page', 1); // Broj stranice, zadani 1 ako nije navedeno
 
-        // Filtriranje po kategoriji
-        if ($request->has('category')) {
-            $query->where('category_id', $request->category);
-        }
+        // Dohvati zapise iz baze podataka koristeći Eloquent
+        $meals = Meal::paginate($perPage, ['*'], 'page', $page);
 
-        // Filtriranje po tagovima
-        if ($request->has('tags')) {
-            $tags = explode(',', $request->tags);
-            $query->whereHas('tags', function ($q) use ($tags) {
-                $q->whereIn('id', $tags);
-            });
-        }
+        // Izračunaj metapodatke
+        $meta = [
+            'currentPage' => $meals->currentPage(),
+            'totalItems' => $meals->total(),
+            'itemsPerPage' => $meals->perPage(),
+            'totalPages' => $meals->lastPage(),
+        ];
 
-        // Ako su definirani dodatni podaci za uključivanje
-        if ($request->has('with')) {
-            $with = explode(',', $request->with);
-            $query->with($with);
-        }
+        // Formatiraj odgovor
+        $response = [
+            'meta' => $meta,
+            'data' => $meals->items(),
+        ];
 
-        // Straničenje
-        $perPage = $request->input('per_page', 10);
-        $meals = $query->paginate($perPage);
-
-        return response()->json($meals);
+        return response()->json($response);
     }
 }
+
+//U ovom primjeru, koristimo paginate() metodu za dohvaćanje zapisa iz baze podataka s paginacijom. 
+//Koristimo parametre $perPage i $page kako bismo omogućili korisniku da definira broj zapisa po stranici i broj stranice u URL-u.
+
+//Zatim izračunavamo metapodatke o trenutnoj stranici, ukupnom broju zapisa, broju zapisa po stranici i ukupnom broju stranica.
+
+//Na kraju, vraćamo odgovor koji uključuje metapodatke i podatke o jelima.
+
+
 
