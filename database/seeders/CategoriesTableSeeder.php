@@ -3,7 +3,7 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\Category;
+use Illuminate\Support\Facades\DB;
 use Faker\Factory as Faker;
 
 class CategoriesTableSeeder extends Seeder
@@ -13,9 +13,11 @@ class CategoriesTableSeeder extends Seeder
         $faker = Faker::create();
 
         foreach (range(1, 20) as $index) {
-            Category::create([
+            DB::table('categories')->insert([
                 'title' => $faker->sentence(3),
                 'slug' => $faker->slug,
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
         }
     }
