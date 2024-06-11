@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\MealTranslation;
+use App\Models\TagTranslation;
 use App\Models\MealIngredient;
+use App\Models\MealTag;
 use App\Models\Meal;
 use App\Models\IngredientTranslation;
 use Illuminate\Http\Request;
@@ -74,23 +76,23 @@ class MealController extends Controller
         if ($with && in_array('category', explode(',', $with))) {
             // Get meal IDs from the translations
             $mealIds = $meals->pluck('meal_id')->toArray();
-        
+
             // Get meals with categories
             $mealsWithCategories = Meal::whereIn('id', $mealIds)
                 ->with(['category.translations' => function ($query) use ($lang) {
                     $query->where('locale', $lang);
                 }])
                 ->get();
-        
+
             // Map meals with their categories
             $meals->transform(function ($meal) use ($mealsWithCategories, $lang) {
                 $mealWithCategory = $mealsWithCategories->firstWhere('id', $meal->meal_id);
                 $categoryTranslation = null;
-        
+
                 if ($mealWithCategory->category) {
                     $categoryTranslation = $mealWithCategory->category->translations->first();
                 }
-        
+
                 $meal->category = $mealWithCategory->category
                     ? [
                         'id' => $mealWithCategory->category->id,
@@ -98,14 +100,38 @@ class MealController extends Controller
                         'slug' => $mealWithCategory->category->slug,
                     ]
                     : null;
-        
+
                 // Get status from the Meal model
                 $meal->status = $mealWithCategory->status;
-        
+
                 return $meal;
             });
         }
-        
+
+        // If 'tags' are requested, load and transform them
+        if ($with && in_array('tags', explode(',', $with))) {
+            $mealIds = $meals->pluck('meal_id')->toArray();
+            $mealTags = MealTag::whereIn('meal_id', $mealIds)->get();
+
+            $meals->each(function ($meal) use ($lang, $mealTags) {
+                $tagIds = $mealTags->where('meal_id', $meal->meal_id)->pluck('tag_id')->toArray();
+                $tagTranslations = TagTranslation::whereIn('tag_id', $tagIds)
+                    ->where('locale', $lang)
+                    ->get();
+
+                // Format tags to match the requested structure
+                $formattedTags = $tagTranslations->map(function ($tagTranslation) {
+                    return [
+                        'id' => $tagTranslation->tag_id,
+                        'title' => $tagTranslation->title,
+                        'slug' => $tagTranslation->slug,
+                    ];
+                });
+
+                $meal->tags = $formattedTags->toArray();
+            });
+        }
+
         // Format the response
         $data = $meals->map(function ($meal) {
             return [
@@ -115,9 +141,10 @@ class MealController extends Controller
                 'status' => $meal->status,
                 'category' => $meal->category,
                 'ingredients' => $meal->ingredients ?? null,
+                'tags' => $meal->tags ?? null,
             ];
         });
-        
+
         // Calculate metadata
         $meta = [
             'currentPage' => $meals->currentPage(),
@@ -125,27 +152,32 @@ class MealController extends Controller
             'itemsPerPage' => $meals->perPage(),
             'totalPages' => $meals->lastPage(),
         ];
-        
+
         // Generate links
-        $baseUrl = $request->url().'?'.http_build_query($request->except('page'));
-        $prevPage = $meals->currentPage() > 1 ? $baseUrl.'&page='.($meals->currentPage() - 1) : null;
-        $nextPage = $meals->hasMorePages() ? $baseUrl.'&page='.($meals->currentPage() + 1) : null;
-        $selfPage = $baseUrl.'&page='.$meals->currentPage();
-        
+        $baseUrl = $request->url() . '?' . http_build_query($request->except('page'));
+        $currentPage = $meals->currentPage();
+        $prevPage = $currentPage > 1 ? $baseUrl . '&page=' . ($currentPage - 1) : null;
+        $nextPage = $meals->hasMorePages() ? $baseUrl . '&page=' . ($currentPage + 1) : null;
+        $selfPage = $baseUrl . '&page=' . $currentPage;
+
+        // Replace %2C with commas
+        $prevPage = $prevPage ? str_replace('%2C', ',', $prevPage) : null;
+        $nextPage = $nextPage ? str_replace('%2C', ',', $nextPage) : null;
+        $selfPage = str_replace('%2C', ',', $selfPage);
+
         $links = [
             'prev' => $prevPage,
             'next' => $nextPage,
             'self' => $selfPage,
         ];
-        
+
         // Format the response
         $response = [
             'meta' => $meta,
             'data' => $data,
             'links' => $links,
         ];
-        
+
         return response()->json($response);
-                
     }
 }
