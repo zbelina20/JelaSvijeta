@@ -2,20 +2,48 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Meal;
+use App\Models\MealTranslation;
 use Illuminate\Http\Request;
 
 class MealController extends Controller
 {
     public function index(Request $request)
     {
-        $perPage = $request->input('per_page', 10); // Broj zapisa po stranici, zadani 10 ako nije navedeno
-        $page = $request->input('page', 1); // Broj stranice, zadani 1 ako nije navedeno
+        // Define validation rules and custom messages
+        $rules = [
+            'lang' => 'required|string|in:en,hr,de,es,fr', // List of supported languages
+        ];
 
-        // Dohvati zapise iz baze podataka koristeći Eloquent
-        $meals = Meal::paginate($perPage, ['*'], 'page', $page);
+        $messages = [
+            'lang.required' => 'You need to specify the language.',
+            'lang.in' => 'The selected language is not supported.',
+        ];
 
-        // Izračunaj metapodatke
+        // Validate the request parameters
+        $validator = \Validator::make($request->all(), $rules, $messages);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => $validator->errors()->first('lang')
+            ], 400);
+        }
+
+        $lang = $request->input('lang');
+        $perPage = $request->filled('per_page') ? $request->input('per_page') : 10; // Default to 10 if not provided
+        $page = $request->filled('page') ? $request->input('page') : 1; // Default to 1 if not provided
+
+        // Get the meal translations for the specified language
+        $meals = MealTranslation::where('locale', $lang)
+                                ->paginate($perPage, ['*'], 'page', $page);
+
+        // Check if there are any results
+        if ($meals->isEmpty()) {
+            return response()->json([
+                'message' => 'No meals found for the specified language.'
+            ], 404);
+        }
+
+        // Calculate metadata
         $meta = [
             'currentPage' => $meals->currentPage(),
             'totalItems' => $meals->total(),
@@ -23,22 +51,25 @@ class MealController extends Controller
             'totalPages' => $meals->lastPage(),
         ];
 
-        // Formatiraj odgovor
+        // Generate links
+        $baseUrl = $request->url().'?'.$request->getQueryString();
+        $prevPage = $meals->currentPage() > 1 ? $baseUrl.'&page='.($meals->currentPage() - 1) : null;
+        $nextPage = $meals->hasMorePages() ? $baseUrl.'&page='.($meals->currentPage() + 1) : null;
+        $selfPage = $baseUrl.'&page='.$meals->currentPage();
+
+        $links = [
+            'prev' => $prevPage,
+            'next' => $nextPage,
+            'self' => $selfPage,
+        ];
+
+        // Format the response
         $response = [
             'meta' => $meta,
             'data' => $meals->items(),
+            'links' => $links,
         ];
 
         return response()->json($response);
     }
 }
-
-//U ovom primjeru, koristimo paginate() metodu za dohvaćanje zapisa iz baze podataka s paginacijom. 
-//Koristimo parametre $perPage i $page kako bismo omogućili korisniku da definira broj zapisa po stranici i broj stranice u URL-u.
-
-//Zatim izračunavamo metapodatke o trenutnoj stranici, ukupnom broju zapisa, broju zapisa po stranici i ukupnom broju stranica.
-
-//Na kraju, vraćamo odgovor koji uključuje metapodatke i podatke o jelima.
-
-
-

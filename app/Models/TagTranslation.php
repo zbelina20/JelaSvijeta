@@ -3,13 +3,9 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Astrotomic\Translatable\Contracts\Translatable as TranslatableContract;
-use Astrotomic\Translatable\Translatable;
 
-class TagTranslation extends Model implements TranslatableContract
+class TagTranslation extends Model
 {
-    use Translatable;
-
     public $timestamps = false;
     protected $fillable = ['title'];
     public $translatedAttributes = ['title'];
