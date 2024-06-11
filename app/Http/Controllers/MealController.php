@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\MealTranslation;
+use App\Models\Meal;
 use Illuminate\Http\Request;
 
 class MealController extends Controller
@@ -29,33 +30,67 @@ class MealController extends Controller
         }
 
         $lang = $request->input('lang');
-        $perPage = $request->filled('per_page') ? $request->input('per_page') : 10; // Default to 10 if not provided
-        $page = $request->filled('page') ? $request->input('page') : 1; // Default to 1 if not provided
+        $with = $request->input('with');
+        $perPage = $request->input('per_page', 10); // Default to 10 if not provided
+        $page = $request->input('page', 1); // Default to 1 if not provided
 
         // Get the meal translations for the specified language
-        $meals = MealTranslation::where('locale', $lang)
-                                ->paginate($perPage, ['*'], 'page', $page);
+        $query = MealTranslation::where('locale', $lang);
 
-        // Check if there are any results
-        if ($meals->isEmpty()) {
-            return response()->json([
-                'message' => 'No meals found for the specified language.'
-            ], 404);
+        // Check for 'with' parameter and add relationships
+        if ($with && in_array('category', explode(',', $with))) {
+            // Get meal IDs from the translations
+            $mealTranslations = $query->paginate($perPage, ['*'], 'page', $page);
+            $mealIds = $mealTranslations->pluck('meal_id')->toArray();
+
+            // Get meals with categories
+            $mealsWithCategories = Meal::whereIn('id', $mealIds)
+                ->with(['category' => function($query) use ($lang) {
+                    $query->with(['translations' => function($query) use ($lang) {
+                        $query->where('locale', $lang);
+                    }]);
+                }])
+                ->get();
+
+            // Map meals with their categories
+            $data = $mealTranslations->map(function ($mealTranslation) use ($mealsWithCategories, $lang) {
+                $meal = $mealsWithCategories->firstWhere('id', $mealTranslation->meal_id);
+                $categoryTranslation = null;
+                if ($meal->category) {
+                    $categoryTranslation = $meal->category->translations->first();
+                }
+
+                return [
+                    'id' => $mealTranslation->id,
+                    'title' => $mealTranslation->title,
+                    'description' => $mealTranslation->description,
+                    'status' => $meal->status,
+                    'category' => $meal->category ? [
+                        'id' => $meal->category->id,
+                        'title' => $categoryTranslation->title ?? null,
+                        'slug' => $meal->category->slug,
+                    ] : null,
+                ];
+            });
+        } else {
+            // Get paginated meal translations
+            $mealTranslations = $query->paginate($perPage, ['*'], 'page', $page);
+            $data = $mealTranslations->items();
         }
 
         // Calculate metadata
         $meta = [
-            'currentPage' => $meals->currentPage(),
-            'totalItems' => $meals->total(),
-            'itemsPerPage' => $meals->perPage(),
-            'totalPages' => $meals->lastPage(),
+            'currentPage' => $mealTranslations->currentPage(),
+            'totalItems' => $mealTranslations->total(),
+            'itemsPerPage' => $mealTranslations->perPage(),
+            'totalPages' => $mealTranslations->lastPage(),
         ];
 
         // Generate links
-        $baseUrl = $request->url().'?'.$request->getQueryString();
-        $prevPage = $meals->currentPage() > 1 ? $baseUrl.'&page='.($meals->currentPage() - 1) : null;
-        $nextPage = $meals->hasMorePages() ? $baseUrl.'&page='.($meals->currentPage() + 1) : null;
-        $selfPage = $baseUrl.'&page='.$meals->currentPage();
+        $baseUrl = $request->url() . '?' . http_build_query($request->except('page'));
+        $prevPage = $mealTranslations->currentPage() > 1 ? $baseUrl . '&page=' . ($mealTranslations->currentPage() - 1) : null;
+        $nextPage = $mealTranslations->hasMorePages() ? $baseUrl . '&page=' . ($mealTranslations->currentPage() + 1) : null;
+        $selfPage = $baseUrl . '&page=' . $mealTranslations->currentPage();
 
         $links = [
             'prev' => $prevPage,
@@ -66,7 +101,7 @@ class MealController extends Controller
         // Format the response
         $response = [
             'meta' => $meta,
-            'data' => $meals->items(),
+            'data' => $data,
             'links' => $links,
         ];
 
