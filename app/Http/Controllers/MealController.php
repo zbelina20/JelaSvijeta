@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\MealTranslation;
+use App\Models\MealIngredient;
 use App\Models\Meal;
+use App\Models\IngredientTranslation;
 use Illuminate\Http\Request;
 
 class MealController extends Controller
@@ -31,80 +33,119 @@ class MealController extends Controller
 
         $lang = $request->input('lang');
         $with = $request->input('with');
-        $perPage = $request->input('per_page', 10); // Default to 10 if not provided
-        $page = $request->input('page', 1); // Default to 1 if not provided
+        $perPage = $request->filled('per_page') ? $request->input('per_page') : 10; // Default to 10 if not provided
+        $page = $request->filled('page') ? $request->input('page') : 1; // Default to 1 if not provided
 
         // Get the meal translations for the specified language
-        $query = MealTranslation::where('locale', $lang);
+        $meals = MealTranslation::where('locale', $lang)->paginate($perPage, ['*'], 'page', $page);
 
-        // Check for 'with' parameter and add relationships
-        if ($with && in_array('category', explode(',', $with))) {
-            // Get meal IDs from the translations
-            $mealTranslations = $query->paginate($perPage, ['*'], 'page', $page);
-            $mealIds = $mealTranslations->pluck('meal_id')->toArray();
-
-            // Get meals with categories
-            $mealsWithCategories = Meal::whereIn('id', $mealIds)
-                ->with(['category' => function($query) use ($lang) {
-                    $query->with(['translations' => function($query) use ($lang) {
-                        $query->where('locale', $lang);
-                    }]);
-                }])
-                ->get();
-
-            // Map meals with their categories
-            $data = $mealTranslations->map(function ($mealTranslation) use ($mealsWithCategories, $lang) {
-                $meal = $mealsWithCategories->firstWhere('id', $mealTranslation->meal_id);
-                $categoryTranslation = null;
-                if ($meal->category) {
-                    $categoryTranslation = $meal->category->translations->first();
-                }
-
-                return [
-                    'id' => $mealTranslation->id,
-                    'title' => $mealTranslation->title,
-                    'description' => $mealTranslation->description,
-                    'status' => $meal->status,
-                    'category' => $meal->category ? [
-                        'id' => $meal->category->id,
-                        'title' => $categoryTranslation->title ?? null,
-                        'slug' => $meal->category->slug,
-                    ] : null,
-                ];
-            });
-        } else {
-            // Get paginated meal translations
-            $mealTranslations = $query->paginate($perPage, ['*'], 'page', $page);
-            $data = $mealTranslations->items();
+        // Check if there are any results
+        if ($meals->isEmpty()) {
+            return response()->json([
+                'message' => 'No meals found for the specified language.'
+            ], 404);
         }
 
+        // If 'ingredients' are requested, load and transform them
+        if ($with && in_array('ingredients', explode(',', $with))) {
+            $mealIds = $meals->pluck('meal_id')->toArray();
+            $mealIngredients = MealIngredient::whereIn('meal_id', $mealIds)->get();
+
+            $meals->each(function ($meal) use ($lang, $mealIngredients) {
+                $ingredients = $mealIngredients->where('meal_id', $meal->meal_id)->pluck('ingredient_id');
+                $ingredientTranslations = IngredientTranslation::whereIn('ingredient_id', $ingredients)
+                    ->where('locale', $lang)
+                    ->get();
+
+                // Format ingredients to match the requested structure
+                $formattedIngredients = $ingredientTranslations->map(function ($ingredientTranslation) {
+                    return [
+                        'id' => $ingredientTranslation->ingredient_id,
+                        'title' => $ingredientTranslation->title,
+                        'slug' => $ingredientTranslation->slug,
+                    ];
+                });
+
+                $meal->ingredients = $formattedIngredients->toArray();
+            });
+        }
+
+        // If 'category' is requested, load and transform it
+        if ($with && in_array('category', explode(',', $with))) {
+            // Get meal IDs from the translations
+            $mealIds = $meals->pluck('meal_id')->toArray();
+        
+            // Get meals with categories
+            $mealsWithCategories = Meal::whereIn('id', $mealIds)
+                ->with(['category.translations' => function ($query) use ($lang) {
+                    $query->where('locale', $lang);
+                }])
+                ->get();
+        
+            // Map meals with their categories
+            $meals->transform(function ($meal) use ($mealsWithCategories, $lang) {
+                $mealWithCategory = $mealsWithCategories->firstWhere('id', $meal->meal_id);
+                $categoryTranslation = null;
+        
+                if ($mealWithCategory->category) {
+                    $categoryTranslation = $mealWithCategory->category->translations->first();
+                }
+        
+                $meal->category = $mealWithCategory->category
+                    ? [
+                        'id' => $mealWithCategory->category->id,
+                        'title' => $categoryTranslation ? $categoryTranslation->title : null,
+                        'slug' => $mealWithCategory->category->slug,
+                    ]
+                    : null;
+        
+                // Get status from the Meal model
+                $meal->status = $mealWithCategory->status;
+        
+                return $meal;
+            });
+        }
+        
+        // Format the response
+        $data = $meals->map(function ($meal) {
+            return [
+                'id' => $meal->id,
+                'title' => $meal->title,
+                'description' => $meal->description,
+                'status' => $meal->status,
+                'category' => $meal->category,
+                'ingredients' => $meal->ingredients ?? null,
+            ];
+        });
+        
         // Calculate metadata
         $meta = [
-            'currentPage' => $mealTranslations->currentPage(),
-            'totalItems' => $mealTranslations->total(),
-            'itemsPerPage' => $mealTranslations->perPage(),
-            'totalPages' => $mealTranslations->lastPage(),
+            'currentPage' => $meals->currentPage(),
+            'totalItems' => $meals->total(),
+            'itemsPerPage' => $meals->perPage(),
+            'totalPages' => $meals->lastPage(),
         ];
-
+        
         // Generate links
-        $baseUrl = $request->url() . '?' . http_build_query($request->except('page'));
-        $prevPage = $mealTranslations->currentPage() > 1 ? $baseUrl . '&page=' . ($mealTranslations->currentPage() - 1) : null;
-        $nextPage = $mealTranslations->hasMorePages() ? $baseUrl . '&page=' . ($mealTranslations->currentPage() + 1) : null;
-        $selfPage = $baseUrl . '&page=' . $mealTranslations->currentPage();
-
+        $baseUrl = $request->url().'?'.http_build_query($request->except('page'));
+        $prevPage = $meals->currentPage() > 1 ? $baseUrl.'&page='.($meals->currentPage() - 1) : null;
+        $nextPage = $meals->hasMorePages() ? $baseUrl.'&page='.($meals->currentPage() + 1) : null;
+        $selfPage = $baseUrl.'&page='.$meals->currentPage();
+        
         $links = [
             'prev' => $prevPage,
             'next' => $nextPage,
             'self' => $selfPage,
         ];
-
+        
         // Format the response
         $response = [
             'meta' => $meta,
             'data' => $data,
             'links' => $links,
         ];
-
+        
         return response()->json($response);
+                
     }
 }
