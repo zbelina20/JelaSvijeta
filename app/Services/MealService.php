@@ -1,4 +1,4 @@
-<?php 
+<?php
 
 namespace App\Services;
 
@@ -7,6 +7,8 @@ use App\Models\TagTranslation;
 use App\Models\MealIngredient;
 use App\Models\MealTag;
 use App\Models\Meal;
+use App\Models\Tag;
+use App\Models\Ingredient;
 use App\Models\IngredientTranslation;
 use Carbon\Carbon;
 
@@ -21,8 +23,12 @@ class MealService
         $diffTime = isset($filters['diff_time']) ? (int) $filters['diff_time'] : 0;
 
         $query = MealTranslation::where('locale', $lang);
+        $meals = $query->paginate($perPage, ['*'], 'page', $page);
+        $mealIds = $meals->pluck('meal_id')->toArray();
+        $statusesQuery = Meal::whereIn('id', $mealIds);
 
         if ($diffTime > 0) {
+            $statuses = $statusesQuery->pluck('status', 'id');
             $dateTime = Carbon::createFromTimestamp($diffTime)->setTimezone('CEST')->toDateTimeString();
             $query->whereHas('meal', function ($mealQuery) use ($dateTime) {
                 $mealQuery->where(function ($mealQuery) use ($dateTime) {
@@ -30,12 +36,19 @@ class MealService
                         ->orWhere('updated_at', '>=', $dateTime);
                 });
             });
+        } else {
+            $statuses = $statusesQuery->where('status', 'created')->pluck('status', 'id');
         }
 
-        $meals = $query->paginate($perPage, ['*'], 'page', $page);
+        $meals->each(function ($meal) use ($statuses) {
+            if (isset($statuses[$meal->meal_id])) {
+                $meal->status = $statuses[$meal->meal_id];
+            } else {
+                unset($meal->status);
+            }
+        });
 
         if ($with && in_array('ingredients', explode(',', $with))) {
-            $mealIds = $meals->pluck('meal_id')->toArray();
             $mealIngredients = MealIngredient::whereIn('meal_id', $mealIds)->get();
 
             $meals->each(function ($meal) use ($lang, $mealIngredients) {
@@ -44,11 +57,13 @@ class MealService
                     ->where('locale', $lang)
                     ->get();
 
-                $formattedIngredients = $ingredientTranslations->map(function ($ingredientTranslation) {
+                $formattedIngredients = $ingredientTranslations->map(function ($ingredientTranslation) use ($ingredients) {
+                    $ingredient = Ingredient::find($ingredientTranslation->ingredient_id);
+
                     return [
                         'id' => $ingredientTranslation->ingredient_id,
                         'title' => $ingredientTranslation->title,
-                        'slug' => $ingredientTranslation->slug,
+                        'slug' => $ingredient ? $ingredient->slug : null,
                     ];
                 });
 
@@ -57,7 +72,6 @@ class MealService
         }
 
         if ($with && in_array('category', explode(',', $with))) {
-            $mealIds = $meals->pluck('meal_id')->toArray();
 
             $mealsWithCategories = Meal::whereIn('id', $mealIds)
                 ->with(['category.translations' => function ($query) use ($lang) {
@@ -81,14 +95,11 @@ class MealService
                     ]
                     : null;
 
-                $meal->status = $mealWithCategory->status;
-
                 return $meal;
             });
         }
 
         if ($with && in_array('tags', explode(',', $with))) {
-            $mealIds = $meals->pluck('meal_id')->toArray();
             $mealTags = MealTag::whereIn('meal_id', $mealIds)->get();
 
             $meals->each(function ($meal) use ($lang, $mealTags) {
@@ -98,17 +109,19 @@ class MealService
                     ->get();
 
                 $formattedTags = $tagTranslations->map(function ($tagTranslation) {
+                    $tag = Tag::find($tagTranslation->tag_id);
+
                     return [
                         'id' => $tagTranslation->tag_id,
                         'title' => $tagTranslation->title,
-                        'slug' => $tagTranslation->slug,
+                        'slug' => $tag ? $tag->slug : null,
                     ];
                 });
 
                 $meal->tags = $formattedTags->toArray();
             });
         }
-
+        
         return $meals;
     }
 }

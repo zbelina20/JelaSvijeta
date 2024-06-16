@@ -21,7 +21,7 @@ class MealController extends Controller
         ];
     
         $messages = [
-            'lang.required' => 'You need to specify the language.',
+            'lang.required' => 'You need to specify the language of the meals.',
             'lang.in' => 'The selected language is not supported.',
         ];
     
@@ -37,6 +37,11 @@ class MealController extends Controller
     
         try {
             $meals = $this->mealService->getFilteredMeals($data);
+            $filteredMeals = $meals->getCollection()->transform(function ($meal) {
+                if (!is_null($meal->status)) {
+                    return $meal;
+                }
+            })->filter();
         } catch (\Exception $e) {
             return response()->json(['message' => 'Error retrieving meals.'], 500);
         }
@@ -47,16 +52,29 @@ class MealController extends Controller
             ], 404);
         }
 
-        $data = $meals->map(function ($meal) {
-            return [
+        $mealData = $filteredMeals->reject(function ($meal) {
+            return is_null($meal);
+        })->map(function ($meal) {
+            $mealArray = [
                 'id' => $meal->id,
                 'title' => $meal->title,
                 'description' => $meal->description,
                 'status' => $meal->status,
-                'category' => $meal->category,
-                'ingredients' => $meal->ingredients ?? null,
-                'tags' => $meal->tags ?? null,
             ];
+        
+            if (!is_null($meal->category)) {
+                $mealArray['category'] = $meal->category;
+            }
+        
+            if (!is_null($meal->ingredients)) {
+                $mealArray['ingredients'] = $meal->ingredients;
+            }
+        
+            if (!is_null($meal->tags)) {
+                $mealArray['tags'] = $meal->tags;
+            }
+        
+            return $mealArray;
         });
 
         $meta = [
@@ -84,7 +102,7 @@ class MealController extends Controller
 
         $response = [
             'meta' => $meta,
-            'data' => $data,
+            'data' => $mealData,
             'links' => $links,
         ];
 
