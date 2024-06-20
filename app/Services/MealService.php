@@ -18,9 +18,11 @@ class MealService
     {
         $lang = $filters['lang'];
         $with = $filters['with'] ?? null;
-        $perPage = $filters['per_page'] ?? 10;
-        $page = $filters['page'] ?? 1;
+        $perPage = isset($filters['per_page']) ? (int) $filters['per_page'] : 10;
+        $page = isset($filters['page']) ? (int) $filters['page'] : 1;
         $diffTime = isset($filters['diff_time']) ? (int) $filters['diff_time'] : 0;
+        $category = $filters['category'] ?? null;
+        $tags = $filters['tags'] ?? null;
 
         $query = MealTranslation::where('locale', $lang);
         $meals = $query->paginate($perPage, ['*'], 'page', $page);
@@ -72,8 +74,19 @@ class MealService
         }
 
         if ($with && in_array('category', explode(',', $with))) {
+            $mealIds = $meals->pluck('meal_id')->toArray();
 
-            $mealsWithCategories = Meal::whereIn('id', $mealIds)
+            $mealsWithCategoriesQuery = Meal::whereIn('id', $mealIds);
+
+            if ($category === 'NULL') {
+                $mealsWithCategoriesQuery->doesntHave('category');
+            } elseif ($category === '!NULL') {
+                $mealsWithCategoriesQuery->has('category');
+            } elseif ($category && is_numeric($category)) {
+                $mealsWithCategoriesQuery->where('category_id', $category);
+            }
+
+            $mealsWithCategories = $mealsWithCategoriesQuery
                 ->with(['category.translations' => function ($query) use ($lang) {
                     $query->where('locale', $lang);
                 }])
@@ -83,11 +96,11 @@ class MealService
                 $mealWithCategory = $mealsWithCategories->firstWhere('id', $meal->meal_id);
                 $categoryTranslation = null;
 
-                if ($mealWithCategory->category) {
+                if ($mealWithCategory && $mealWithCategory->category) {
                     $categoryTranslation = $mealWithCategory->category->translations->first();
                 }
 
-                $meal->category = $mealWithCategory->category
+                $meal->category = $mealWithCategory && $mealWithCategory->category
                     ? [
                         'id' => $mealWithCategory->category->id,
                         'title' => $categoryTranslation ? $categoryTranslation->title : null,
@@ -102,15 +115,38 @@ class MealService
         if ($with && in_array('tags', explode(',', $with))) {
             $mealTags = MealTag::whereIn('meal_id', $mealIds)->get();
 
-            $meals->each(function ($meal) use ($lang, $mealTags) {
+            $meals->each(function ($meal) use ($lang, $mealTags, $tags) {
+                // Iterate over each meal in the $meals collection
+
+                if (!is_null($tags)) {
+                    // Split tag IDs from the 'tags' parameter if provided
+                    $tagIds = explode(',', $tags);
+
+                    // Check if the current meal has all specified tags
+                    $hasAllTags = collect($tagIds)->every(function ($tagId) use ($mealTags, $meal) {
+                        return $mealTags->where('meal_id', $meal->meal_id)->pluck('tag_id')->contains($tagId);
+                    });
+
+                    if (!$hasAllTags) {
+                        // If the meal does not have all specified tags, skip processing
+                        return;
+                    }
+                }
+
+                // Retrieve tag IDs for the current meal
                 $tagIds = $mealTags->where('meal_id', $meal->meal_id)->pluck('tag_id')->toArray();
+
+                // Retrieve tag translations for the filtered tag IDs
                 $tagTranslations = TagTranslation::whereIn('tag_id', $tagIds)
                     ->where('locale', $lang)
                     ->get();
 
+                // Format tags with their translations
                 $formattedTags = $tagTranslations->map(function ($tagTranslation) {
+                    // Retrieve the tag details from the Tag model
                     $tag = Tag::find($tagTranslation->tag_id);
 
+                    // Prepare formatted tag data
                     return [
                         'id' => $tagTranslation->tag_id,
                         'title' => $tagTranslation->title,
@@ -118,10 +154,12 @@ class MealService
                     ];
                 });
 
+                // Assign formatted tags to the current meal object
                 $meal->tags = $formattedTags->toArray();
             });
         }
-        
+
+
         return $meals;
     }
 }

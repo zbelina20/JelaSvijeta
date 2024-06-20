@@ -1,8 +1,10 @@
 <?php
 
 namespace App\Http\Controllers;
+
 use Illuminate\Http\Request;
 use App\Services\MealService;
+use Illuminate\Support\Facades\Log;
 
 class MealController extends Controller
 {
@@ -15,26 +17,26 @@ class MealController extends Controller
 
     public function index(Request $request)
     {
-        
+
         $rules = [
             'lang' => 'required|string|in:en,hr,de,es,fr',
         ];
-    
+
         $messages = [
             'lang.required' => 'You need to specify the language of the meals.',
             'lang.in' => 'The selected language is not supported.',
         ];
-    
+
         $validator = \Validator::make($request->all(), $rules, $messages);
-    
+
         if ($validator->fails()) {
             return response()->json([
                 'message' => $validator->errors()->first('lang')
             ], 400);
         }
-    
-        $data = $request->only(['lang', 'with', 'per_page', 'page', 'diff_time']);
-    
+
+        $data = $request->only(['lang', 'with', 'per_page', 'page', 'diff_time', 'category', 'tags']);
+
         try {
             $meals = $this->mealService->getFilteredMeals($data);
             $filteredMeals = $meals->getCollection()->transform(function ($meal) {
@@ -43,6 +45,8 @@ class MealController extends Controller
                 }
             })->filter();
         } catch (\Exception $e) {
+            \Log::error('Exception occurred: ' . $e->getMessage());
+            \Log::error('Stack trace: ' . $e->getTraceAsString());
             return response()->json(['message' => 'Error retrieving meals.'], 500);
         }
 
@@ -61,19 +65,19 @@ class MealController extends Controller
                 'description' => $meal->description,
                 'status' => $meal->status,
             ];
-        
+
             if (!is_null($meal->category)) {
                 $mealArray['category'] = $meal->category;
             }
-        
+
             if (!is_null($meal->ingredients)) {
                 $mealArray['ingredients'] = $meal->ingredients;
             }
-        
+
             if (!is_null($meal->tags)) {
                 $mealArray['tags'] = $meal->tags;
             }
-        
+
             return $mealArray;
         });
 

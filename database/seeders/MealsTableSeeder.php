@@ -32,7 +32,7 @@ class MealsTableSeeder extends Seeder
             // Attach tags
             $mealTags = $faker->randomElements($tagIds, $faker->numberBetween(1, 3));
             foreach ($mealTags as $tagId) {
-                DB::table('meal_tag')->insert([
+                DB::table('meal_tags')->insert([
                     'meal_id' => $mealId,
                     'tag_id' => $tagId,
                 ]);
@@ -41,7 +41,7 @@ class MealsTableSeeder extends Seeder
             // Attach ingredients
             $mealIngredients = $faker->randomElements($ingredientIds, $faker->numberBetween(1, 3));
             foreach ($mealIngredients as $ingredientId) {
-                DB::table('meal_ingredient')->insert([
+                DB::table('meal_ingredients')->insert([
                     'meal_id' => $mealId,
                     'ingredient_id' => $ingredientId,
                 ]);
