@@ -116,37 +116,27 @@ class MealService
             $mealTags = MealTag::whereIn('meal_id', $mealIds)->get();
 
             $meals->each(function ($meal) use ($lang, $mealTags, $tags) {
-                // Iterate over each meal in the $meals collection
 
                 if (!is_null($tags)) {
-                    // Split tag IDs from the 'tags' parameter if provided
                     $tagIds = explode(',', $tags);
 
-                    // Check if the current meal has all specified tags
                     $hasAllTags = collect($tagIds)->every(function ($tagId) use ($mealTags, $meal) {
                         return $mealTags->where('meal_id', $meal->meal_id)->pluck('tag_id')->contains($tagId);
                     });
 
                     if (!$hasAllTags) {
-                        // If the meal does not have all specified tags, skip processing
                         return;
                     }
                 }
 
-                // Retrieve tag IDs for the current meal
                 $tagIds = $mealTags->where('meal_id', $meal->meal_id)->pluck('tag_id')->toArray();
-
-                // Retrieve tag translations for the filtered tag IDs
                 $tagTranslations = TagTranslation::whereIn('tag_id', $tagIds)
                     ->where('locale', $lang)
                     ->get();
 
-                // Format tags with their translations
                 $formattedTags = $tagTranslations->map(function ($tagTranslation) {
-                    // Retrieve the tag details from the Tag model
                     $tag = Tag::find($tagTranslation->tag_id);
 
-                    // Prepare formatted tag data
                     return [
                         'id' => $tagTranslation->tag_id,
                         'title' => $tagTranslation->title,
@@ -154,12 +144,9 @@ class MealService
                     ];
                 });
 
-                // Assign formatted tags to the current meal object
                 $meal->tags = $formattedTags->toArray();
             });
         }
-
-
         return $meals;
     }
 }
